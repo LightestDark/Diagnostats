@@ -2,6 +2,33 @@
 # Windows System Diagnostic Tool
 
 
+#Images:
+
+
+<img width="997" height="723" alt="image" src="https://github.com/user-attachments/assets/b0198585-08b8-453a-99d2-8a435641a786" />
+
+
+<img width="1096" height="619" alt="image" src="https://github.com/user-attachments/assets/dfb12525-5403-4349-82f5-5f2ac4ca0706" />
+
+
+<img width="994" height="696" alt="image" src="https://github.com/user-attachments/assets/0cc676da-60ef-438d-8bad-910dfd16ef2f" />
+
+
+
+
+<img width="689" height="392" alt="image" src="https://github.com/user-attachments/assets/0f9edfb4-978d-4bca-9cc9-b084208e3e9e" />
+
+<img width="469" height="229" alt="image" src="https://github.com/user-attachments/assets/13ec1661-67fc-4de6-8955-349789db8090" />
+
+
+<img width="659" height="716" alt="image" src="https://github.com/user-attachments/assets/546386b2-bb9b-43b0-9d3a-c0cecc9b1de9" />
+
+
+
+
+
+
+
 # Change Log
 
  Version 1.3
@@ -33,7 +60,6 @@ Run the starter file and it will automsatically run the diagnostic file
 
  Output
 - Console Summary: Quick overview with status indicators
-- **Detailed Report**: Complete text file with all findings
 - Recommendations: Actionable advice based on system state
 
  Requirements
