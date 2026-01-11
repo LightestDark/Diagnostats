@@ -20,9 +20,8 @@ Version 1.0
 A comprehensive Python tool that analyzes Windows systems and generates detailed health reports. It examines hardware, software, performance, and security status to help identify potential issues.
 
  Quick Start
-1. Save the script as `diagnostic.py`
-2. Run: `python diagnostic.py`
-3. Follow prompts to generate report
+Save both files
+Run the starter file and it will automsatically run the diagnostic file
 
  What It Checks
 - System Info: Windows version, architecture, uptime
