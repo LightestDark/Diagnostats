@@ -1,82 +1,88 @@
-# starter.py
-import os
-import sys
-import subprocess
-import platform
+#!/usr/bin/env python3
 
-def check_and_install():
-    """Check and install required packages"""
-    print("Checking system requirements...")
+# Quick system checker for the diag tool
+# Make sure we can run before opening the main window
+
+import sys
+import os
+from pathlib import Path
+
+def main():
+    print("Checking your system...")
     
-    # Check Python version
+    # Windows check
+    if sys.platform != "win32":
+        print("Oops - this is for Windows only")
+        input("Hit enter to quit...")
+        return 1
+    
+    # Python version
     if sys.version_info < (3, 6):
-        print("ERROR: Python 3.6 or higher is required")
-        input("Press Enter to exit...")
-        sys.exit(1)
+        print("Need Python 3.6 or newer")
+        print(f"You have {sys.version}")
+        input("Press enter...")
+        return 1
     
-    # Check if it's Windows
-    if platform.system() != "Windows":
-        print("ERROR: This tool is for Windows only")
-        input("Press Enter to exit...")
-        sys.exit(1)
-    
-    # Required packages
-    packages = ["psutil", "wmi", "tabulate", "py-cpuinfo"]
-    
-    print("\nChecking required packages...")
+    # Try to install what's missing
+    print("Checking packages...")
     missing = []
     
-    for package in packages:
+    # List what we need
+    needs = ['psutil', 'wmi', 'tabulate']
+    
+    for pkg in needs:
         try:
-            __import__(package.replace("-", "_"))
-            print(f"✓ {package}")
+            __import__(pkg)
+            print(f"  OK: {pkg}")
         except ImportError:
-            print(f"✗ {package} (missing)")
-            missing.append(package)
+            print(f"  Missing: {pkg}")
+            missing.append(pkg)
     
     if missing:
-        print(f"\nInstalling {len(missing)} missing packages...")
+        print(f"\nNeed to install {len(missing)} packages")
         try:
-            for package in missing:
-                print(f"Installing {package}...")
-                subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-            print("\n✓ All packages installed successfully!")
+            import subprocess
+            for pkg in missing:
+                print(f"Installing {pkg}...")
+                # Use pip, hope it works
+                subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+            print("Done!")
         except Exception as e:
-            print(f"\nERROR: Failed to install packages: {e}")
-            print("\nPlease install manually: pip install psutil wmi tabulate py-cpuinfo")
-            input("\nPress Enter to exit...")
-            sys.exit(1)
+            print(f"Failed: {e}")
+            print("\nYou might need to run as admin or install manually:")
+            print(f"pip install {' '.join(missing)}")
+            input("\nPress enter to try anyway...")
     
-    # Check for Tkinter (should be included with Python)
+    # Now try to run the actual tool
+    print("\nStarting diagnostics tool...")
+    
+    # Look for the main file
+    tool_file = "diag_tool.py"
+    if not os.path.exists(tool_file):
+        # Maybe it's in the same dir?
+        tool_file = Path(__file__).parent / "diag_tool.py"
+    
+    if not os.path.exists(tool_file):
+        print(f"Can't find {tool_file}")
+        print("Make sure diag_tool.py is in the same folder")
+        input("Enter to exit...")
+        return 1
+    
+    # Add current dir to path just in case
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    
     try:
-        import tkinter
-        print("✓ tkinter")
-    except ImportError:
-        print("\nERROR: Tkinter is not available")
-        print("Tkinter should be included with Python installation.")
-        print("Reinstall Python and make sure to check 'tcl/tk and IDLE' option.")
-        input("\nPress Enter to exit...")
-        sys.exit(1)
-    
-    return True
-
-def run_diagnostic():
-    """Run the diagnostic tool"""
-    print("\n" + "="*50)
-    print("Starting Windows Diagnostic Tool...")
-    print("="*50 + "\n")
-    
-    try:
-        # Import and run the main tool
-        from diagnostic_tool import main
-        main()
+        # Import and run
+        from diag_tool import run_app
+        run_app()
     except Exception as e:
-        print(f"\nERROR: Failed to start diagnostic tool: {e}")
+        print(f"Error starting tool: {e}")
         import traceback
         traceback.print_exc()
-        input("\nPress Enter to exit...")
-        sys.exit(1)
+        input("\nPress enter to close...")
+        return 1
+    
+    return 0
 
 if __name__ == "__main__":
-    if check_and_install():
-        run_diagnostic()
+    exit(main())
