@@ -1,88 +1,101 @@
-#!/usr/bin/env python3
-
-# Quick system checker for the diag tool
-# Make sure we can run before opening the main window
+# starter.py - just gets things ready
 
 import sys
 import os
-from pathlib import Path
 
-def main():
-    print("Checking your system...")
+# check we can run this thing
+def setup():
+    print("PC Diagnostic - Setup")
     
-    # Windows check
-    if sys.platform != "win32":
-        print("Oops - this is for Windows only")
-        input("Hit enter to quit...")
-        return 1
+    # gotta be windows
+    if not sys.platform.startswith('win'):
+        print("Sorry, windows only!")
+        return False
     
-    # Python version
-    if sys.version_info < (3, 6):
-        print("Need Python 3.6 or newer")
-        print(f"You have {sys.version}")
-        input("Press enter...")
-        return 1
+    # python ok?
+    if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 6):
+        print("Need python 3.6 or better")
+        print("You have:", sys.version)
+        return False
     
-    # Try to install what's missing
-    print("Checking packages...")
+    # check for modules we need
+    needed = ['psutil', 'tkinter']
+    
+    print("\nChecking modules...")
     missing = []
-    
-    # List what we need
-    needs = ['psutil', 'wmi', 'tabulate']
-    
-    for pkg in needs:
+    for mod in needed:
         try:
-            __import__(pkg)
-            print(f"  OK: {pkg}")
-        except ImportError:
-            print(f"  Missing: {pkg}")
-            missing.append(pkg)
+            if mod == 'tkinter':
+                import tkinter  # tkinter is special
+            else:
+                __import__(mod)
+            print(f"  + {mod}")
+        except:
+            print(f"  - {mod} (missing)")
+            missing.append(mod)
     
+    # try to get missing ones
     if missing:
-        print(f"\nNeed to install {len(missing)} packages")
+        print(f"\nMissing {len(missing)} thing(s)...")
         try:
             import subprocess
-            for pkg in missing:
-                print(f"Installing {pkg}...")
-                # Use pip, hope it works
-                subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-            print("Done!")
+            for m in missing:
+                if m != 'tkinter':  # can't pip install tkinter
+                    print(f"Trying to get {m}...")
+                    subprocess.call([sys.executable, '-m', 'pip', 'install', m])
         except Exception as e:
-            print(f"Failed: {e}")
-            print("\nYou might need to run as admin or install manually:")
-            print(f"pip install {' '.join(missing)}")
-            input("\nPress enter to try anyway...")
+            print(f"Oops: {e}")
+            print("\nYou might need to install manually or run as admin")
+            resp = input("Try anyway? (y/n): ")
+            if resp.lower() != 'y':
+                return False
     
-    # Now try to run the actual tool
-    print("\nStarting diagnostics tool...")
-    
-    # Look for the main file
-    tool_file = "diag_tool.py"
-    if not os.path.exists(tool_file):
-        # Maybe it's in the same dir?
-        tool_file = Path(__file__).parent / "diag_tool.py"
-    
-    if not os.path.exists(tool_file):
-        print(f"Can't find {tool_file}")
-        print("Make sure diag_tool.py is in the same folder")
-        input("Enter to exit...")
-        return 1
-    
-    # Add current dir to path just in case
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    
-    try:
-        # Import and run
-        from diag_tool import run_app
-        run_app()
-    except Exception as e:
-        print(f"Error starting tool: {e}")
-        import traceback
-        traceback.print_exc()
-        input("\nPress enter to close...")
-        return 1
-    
-    return 0
+    return True
 
+
+# main bit
 if __name__ == "__main__":
-    exit(main())
+    ok = setup()
+    
+    if ok:
+        print("\nAll good! Starting main app...")
+        
+        # add current folder to path
+        cur_dir = os.path.dirname(os.path.abspath(__file__))
+        if cur_dir not in sys.path:
+            sys.path.insert(0, cur_dir)
+        
+        # try to run the main thing
+        try:
+            # look for main file
+            main_file = os.path.join(cur_dir, 'pc_check.py')
+            if os.path.exists(main_file):
+                print(f"Found {main_file}")
+                
+                # import it
+                import pc_check
+                
+                # check if it has what we need
+                if hasattr(pc_check, 'main'):
+                    pc_check.main()
+                else:
+                    print("Main file doesn't have main() function")
+                    input("Press enter...")
+            else:
+                print(f"Can't find main file at {main_file}")
+
+                for f in os.listdir(cur_dir):
+                    if f.endswith('.py') and 'diag' in f.lower():
+                        print(f"Trying {f}...")
+                        break
+                
+                input("Press enter...")
+                
+        except Exception as e:
+            print(f"Failed to start: {e}")
+            import traceback
+            traceback.print_exc()
+            input("\npress enter to quit...")
+    else:
+        print("\nSetup failed")
+        input("Press enter to exit...")
