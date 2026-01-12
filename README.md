@@ -59,7 +59,7 @@ Run the starter file and it will automsatically run the diagnostic file
 
 
 
-## Security
+Security
 - Tool only reads system information
 - No data transmitted externally
 - Reports stored locally only
