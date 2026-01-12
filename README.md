@@ -37,7 +37,7 @@
 - Added the ability to save detailed reports as text files so you can share them or keep them for later. Also improved security checking to tell you if your antivirus, firewall, and remote desktop are turned on or off.
 
  Version 1.1
-- Now shows you how your computer is performing right now - how hard your processor is working, how much memory you're using, and how fast your disks are reading and writing. Also checks your network connections and internet activity.
+- Now shows you how your computer is performing right now - how hard your processor is working, how much memory you're using, and how fast your disks are reading and writing.
 
 Version 1.0
 - First version that checks your computer's basic information: what Windows version you have, what hardware is inside, how long since your last restart, how much storage space you have left, and what your processor and memory look like.
