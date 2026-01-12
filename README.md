@@ -58,35 +58,6 @@ Run the starter file and it will automsatically run the diagnostic file
 - Security: Antivirus, firewall, updates, user accounts
 - Services: Windows service status
 
- Output
-- Console Summary: Quick overview with status indicators
-- Recommendations: Actionable advice based on system state
-
- Requirements
-- Windows 7+
-- Python 3.6+
-- Optional: Run as admin for full functionality
-
-## Dependencies (Auto-installed)
-- psutil
-- wmi
-- tabulate
-- py-cpuinfo
-- GPUtil
-
- Features
-- Auto-installs missing package
-- Read-only operation (no system changes)
-- Timestamped report files
-
-## Usage Notes
-- Some features require administrator privileges
-
-
-## Troubleshooting
-If you get import errors:
-1. Ensure Python is properly installed
-2. Try: `pip install setuptools`
 
 
 ## Security
