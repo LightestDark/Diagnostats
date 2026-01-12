@@ -1,710 +1,631 @@
-# diagnostic_tool.py
 import os
 import sys
 import platform
-import subprocess
-import psutil
-import datetime
-import socket
-import winreg
+from datetime import datetime
 import time
-from tkinter import *
-from tkinter import ttk, scrolledtext, messagebox, filedialog
 
-class SimpleDiagnosticTool:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Windows Diagnostic Tool")
-        self.root.geometry("1000x700")
+# Try to load what we need, but don't crash if something's missing
+try:
+    import psutil
+    has_psutil = True
+except ImportError:
+    has_psutil = False
+    print("Note: psutil not found, some features limited")
+
+try:
+    import wmi
+    has_wmi = True
+except ImportError:
+    has_wmi = False
+
+try:
+    from tkinter import *
+    from tkinter import ttk, messagebox, filedialog
+    import tkinter.scrolledtext as st
+    has_tk = True
+except ImportError:
+    has_tk = False
+    print("No tkinter - need GUI version of Python")
+
+# Colors I like using
+BG = '#f5f5f5'
+ACCENT = '#2a5caa'
+WARN = '#ff9900'
+BAD = '#cc3333'
+GOOD = '#339966'
+
+class DiagTool:
+    def __init__(self, master):
+        self.master = master
+        master.title("PC Check")
+        master.geometry("950x650")
+        master.configure(bg=BG)
         
-        # Make window appear on top initially
-        self.root.lift()
-        self.root.attributes('-topmost', True)
-        self.root.after_idle(self.root.attributes, '-topmost', False)
+        # Center it
+        master.update_idletasks()
+        w = master.winfo_width()
+        h = master.winfo_height()
+        x = (master.winfo_screenwidth() // 2) - (w // 2)
+        y = (master.winfo_screenheight() // 2) - (h // 2)
+        master.geometry(f'950x650+{x}+{y}')
         
-        # Set window icon (optional)
-        try:
-            self.root.iconbitmap(default='')
-        except:
-            pass
+        # Some state
+        self.scanning = False
+        self.last_scan = None
+        self.data = {}
         
-        # Variables
-        self.is_scanning = False
-        self.system_data = {}
+        self.setup_gui()
         
-        # Setup UI
-        self.setup_ui()
+        # Check if we're admin (sorta)
+        self.check_admin()
         
-        # Show welcome message
-        self.show_welcome()
+        # Load initial system info
+        self.load_basic_info()
     
-    def setup_ui(self):
-        # Configure styles
-        self.root.configure(bg='#f0f0f0')
+    def setup_gui(self):
+        # Top bar
+        top_frame = Frame(self.master, bg=ACCENT, height=70)
+        top_frame.pack(fill=X)
+        top_frame.pack_propagate(0)
         
-        # Main container
-        main_frame = Frame(self.root, bg='#f0f0f0')
-        main_frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
-        
-        # Header
-        header = Frame(main_frame, bg='#2c3e50', height=60)
-        header.pack(fill=X, pady=(0, 20))
-        header.pack_propagate(False)
-        
-        Label(header, text="Windows System Diagnostic", 
+        Label(top_frame, text="PC Diagnostic Tool", 
               font=('Segoe UI', 18, 'bold'), 
-              bg='#2c3e50', fg='white').pack(side=LEFT, padx=20, pady=15)
+              bg=ACCENT, fg='white').pack(side=LEFT, padx=25, pady=20)
         
-        # Content area
-        content = Frame(main_frame, bg='#f0f0f0')
-        content.pack(fill=BOTH, expand=True)
+        # Status label
+        self.status_label = Label(top_frame, text="Ready", 
+                                 font=('Segoe UI', 10), 
+                                 bg=ACCENT, fg='#cccccc')
+        self.status_label.pack(side=RIGHT, padx=25)
         
-        # Left panel - Controls
-        left_panel = Frame(content, bg='#f0f0f0', width=300)
-        left_panel.pack(side=LEFT, fill=Y, padx=(0, 20))
-        left_panel.pack_propagate(False)
+        # Main area
+        main = Frame(self.master, bg=BG)
+        main.pack(fill=BOTH, expand=True, padx=20, pady=20)
         
-        # Control buttons
-        control_frame = Frame(left_panel, bg='white', relief=SOLID, borderwidth=1)
-        control_frame.pack(fill=X, pady=(0, 20))
+        # Left side - controls
+        left = Frame(main, bg=BG, width=250)
+        left.pack(side=LEFT, fill=Y)
+        left.pack_propagate(0)
         
-        Label(control_frame, text="Diagnostic Controls", 
-              font=('Segoe UI', 12, 'bold'), 
-              bg='#3498db', fg='white', 
-              anchor='w').pack(fill=X, padx=10, pady=10)
-        
-        # Run button
-        self.run_btn = Button(control_frame, text="Start System Scan", 
-                             font=('Segoe UI', 10, 'bold'),
-                             bg='#27ae60', fg='white',
+        # Scan button
+        self.scan_btn = Button(left, text="▶ Run Full Scan", 
+                             font=('Segoe UI', 11, 'bold'),
+                             bg=GOOD, fg='white',
                              height=2,
-                             command=self.start_scan)
-        self.run_btn.pack(fill=X, padx=20, pady=10)
+                             command=self.do_scan)
+        self.scan_btn.pack(fill=X, pady=(0, 15))
         
-        # Quick buttons
-        quick_frame = Frame(control_frame, bg='white')
-        quick_frame.pack(fill=X, padx=20, pady=(0, 20))
+        # Quick buttons frame
+        quick_frame = Frame(left, bg=BG)
+        quick_frame.pack(fill=X, pady=(0, 20))
         
         Button(quick_frame, text="System Info", 
-               command=self.quick_system).pack(side=LEFT, fill=X, expand=True, padx=2)
-        Button(quick_frame, text="Disk Check", 
-               command=self.quick_disk).pack(side=LEFT, fill=X, expand=True, padx=2)
+               command=self.show_system,
+               bg='#e0e0e0').pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
+        Button(quick_frame, text="Disks", 
+               command=self.show_disks,
+               bg='#e0e0e0').pack(side=LEFT, fill=X, expand=True)
         
         # Progress
-        self.progress = ttk.Progressbar(control_frame, mode='indeterminate')
-        self.progress.pack(fill=X, padx=20, pady=(0, 10))
-        
-        self.status_label = Label(control_frame, text="Ready", 
-                                  font=('Segoe UI', 9), bg='white')
-        self.status_label.pack(fill=X, padx=20, pady=(0, 20))
+        self.prog = ttk.Progressbar(left, mode='indeterminate', length=100)
+        self.prog.pack(fill=X, pady=(0, 10))
         
         # Report button
-        Button(control_frame, text="Generate Report", 
-               command=self.generate_report,
-               bg='#2980b9', fg='white').pack(fill=X, padx=20, pady=(0, 20))
+        Button(left, text="Save Report", 
+               command=self.save_report,
+               bg=ACCENT, fg='white').pack(fill=X, pady=(0, 25))
         
-        # System summary
-        summary_frame = Frame(left_panel, bg='white', relief=SOLID, borderwidth=1)
-        summary_frame.pack(fill=BOTH, expand=True)
+        # Info box
+        info_frame = Frame(left, bg='white', relief=SOLID, borderwidth=1)
+        info_frame.pack(fill=BOTH, expand=True)
         
-        Label(summary_frame, text="System Summary", 
-              font=('Segoe UI', 12, 'bold'), 
-              bg='#34495e', fg='white', 
-              anchor='w').pack(fill=X, padx=10, pady=10)
+        Label(info_frame, text="Quick Info", 
+              font=('Segoe UI', 11, 'bold'),
+              bg='#555555', fg='white').pack(fill=X, padx=1, pady=8)
         
-        # Summary text area
-        self.summary_text = scrolledtext.ScrolledText(summary_frame, 
-                                                     height=15,
-                                                     font=('Consolas', 9),
-                                                     wrap=WORD,
-                                                     bg='white',
-                                                     relief=FLAT)
-        self.summary_text.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
-        self.summary_text.insert(END, "No scan data available.\nClick 'Start System Scan' to begin.")
-        self.summary_text.config(state=DISABLED)
+        self.info_text = st.ScrolledText(info_frame, height=12,
+                                       font=('Consolas', 9),
+                                       wrap=WORD,
+                                       bg='white',
+                                       relief=FLAT)
+        self.info_text.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
+        self.info_text.insert(END, "Click Scan to start...")
+        self.info_text.config(state=DISABLED)
         
-        # Right panel - Results
-        right_panel = Frame(content, bg='#f0f0f0')
-        right_panel.pack(side=RIGHT, fill=BOTH, expand=True)
+        # Right side - tabs
+        right = Frame(main, bg=BG)
+        right.pack(side=RIGHT, fill=BOTH, expand=True)
         
         # Notebook for tabs
-        self.notebook = ttk.Notebook(right_panel)
-        self.notebook.pack(fill=BOTH, expand=True)
+        self.tabs = ttk.Notebook(right)
+        self.tabs.pack(fill=BOTH, expand=True)
         
-        # Create tabs
-        self.tabs = {}
-        tab_names = ["System", "Performance", "Storage", "Security", "Processes"]
+        # Create a few tabs
+        self.tab_frames = {}
+        tab_names = ['Overview', 'Hardware', 'Storage', 'Running', 'Network']
         
         for name in tab_names:
-            frame = Frame(self.notebook, bg='white')
-            self.tabs[name] = frame
-            self.notebook.add(frame, text=name)
+            frame = Frame(self.tabs, bg='white')
+            self.tab_frames[name] = frame
+            self.tabs.add(frame, text=name)
             
-            # Add text widget to each tab
-            text = scrolledtext.ScrolledText(frame, 
-                                           font=('Consolas', 9),
-                                           wrap=WORD,
-                                           bg='white',
-                                           relief=FLAT)
+            # Add text area to each
+            text = st.ScrolledText(frame, font=('Consolas', 9),
+                                 wrap=WORD, bg='white')
             text.pack(fill=BOTH, expand=True, padx=10, pady=10)
-            text.insert(END, f"{name} information will appear here after scan.")
+            text.insert(END, f"{name} info will show here")
             text.config(state=DISABLED)
             
-            # Store reference
-            self.tabs[f"{name}_text"] = text
+            self.tab_frames[f"{name}_text"] = text
         
-        # Status bar
-        status_bar = Frame(self.root, bg='#34495e', height=30)
-        status_bar.pack(side=BOTTOM, fill=X)
-        status_bar.pack_propagate(False)
+        # Bottom status
+        bottom = Frame(self.master, bg='#333333', height=30)
+        bottom.pack(side=BOTTOM, fill=X)
+        bottom.pack_propagate(0)
         
-        self.status_msg = Label(status_bar, text="Ready", 
-                               font=('Segoe UI', 9), 
-                               bg='#34495e', fg='white')
-        self.status_msg.pack(side=LEFT, padx=10)
-        
-        # Check admin status
-        self.check_admin()
-    
-    def show_welcome(self):
-        """Show welcome message"""
-        welcome_text = """Welcome to Windows Diagnostic Tool
-
-This tool will help you analyze your system's:
-• Hardware specifications
-• Performance metrics
-• Storage usage
-• Security status
-• Running processes
-
-Click 'Start System Scan' to begin."""
-        
-        # Show in summary
-        self.summary_text.config(state=NORMAL)
-        self.summary_text.delete(1.0, END)
-        self.summary_text.insert(END, welcome_text)
-        self.summary_text.config(state=DISABLED)
+        self.bottom_label = Label(bottom, text="", 
+                                 font=('Segoe UI', 9),
+                                 bg='#333333', fg='#aaaaaa')
+        self.bottom_label.pack(side=LEFT, padx=15)
     
     def check_admin(self):
-        """Check if running as administrator"""
+        # Simple admin check
         try:
             import ctypes
-            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-            if is_admin:
-                self.status_msg.config(text="Running as Administrator")
+            admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            if admin:
+                self.bottom_label.config(text="Running as Admin")
             else:
-                self.status_msg.config(text="Standard User - Some features limited")
+                self.bottom_label.config(text="User mode - some info may be limited")
         except:
-            pass
+            self.bottom_label.config(text="")
     
-    def update_status(self, message):
-        """Update status message"""
-        self.status_msg.config(text=message)
-        self.root.update()
+    def load_basic_info(self):
+        # Just get OS and hostname for now
+        self.data['os'] = f"{platform.system()} {platform.release()}"
+        self.data['host'] = platform.node()
+        self.data['arch'] = platform.machine()
+        
+        # Show in info box
+        text = f"OS: {self.data['os']}\n"
+        text += f"Computer: {self.data['host']}\n"
+        text += f"Arch: {self.data['arch']}\n"
+        
+        self.update_info(text)
     
-    def update_text_widget(self, widget, text):
-        """Update a text widget with new content"""
-        widget.config(state=NORMAL)
-        widget.delete(1.0, END)
-        widget.insert(END, text)
-        widget.config(state=DISABLED)
+    def update_info(self, text):
+        self.info_text.config(state=NORMAL)
+        self.info_text.delete(1.0, END)
+        self.info_text.insert(END, text)
+        self.info_text.config(state=DISABLED)
     
-    def start_scan(self):
-        """Start full system scan"""
-        if self.is_scanning:
+    def update_tab(self, name, text):
+        if f"{name}_text" in self.tab_frames:
+            widget = self.tab_frames[f"{name}_text"]
+            widget.config(state=NORMAL)
+            widget.delete(1.0, END)
+            widget.insert(END, text)
+            widget.config(state=DISABLED)
+    
+    def do_scan(self):
+        if self.scanning:
             return
         
-        self.is_scanning = True
-        self.run_btn.config(state=DISABLED, text="Scanning...")
-        self.progress.start()
+        self.scanning = True
+        self.scan_btn.config(state=DISABLED, text="Scanning...")
+        self.prog.start()
+        self.status_label.config(text="Scanning system...")
         
-        # Clear previous results
-        for name in ["System", "Performance", "Storage", "Security", "Processes"]:
-            self.update_text_widget(self.tabs[f"{name}_text"], f"Scanning {name.lower()}...")
-        
-        # Run scan in thread
+        # Run in thread to keep UI responsive
         import threading
-        thread = threading.Thread(target=self.run_scan_thread)
-        thread.daemon = True
-        thread.start()
+        t = threading.Thread(target=self._scan_thread)
+        t.daemon = True
+        t.start()
     
-    def run_scan_thread(self):
-        """Thread function for scanning"""
+    def _scan_thread(self):
         try:
-            # Step 1: System info
-            self.update_status("Collecting system information...")
-            self.system_data = self.collect_system_info()
+            # Get system info
+            self.status_label.config(text="Getting system details...")
+            sys_info = self.get_sys_info()
             
-            # Step 2: Performance
-            self.update_status("Checking performance...")
-            perf_data = self.collect_performance_info()
-            self.system_data.update(perf_data)
+            # Hardware
+            self.status_label.config(text="Checking hardware...")
+            hw_info = self.get_hardware_info()
             
-            # Step 3: Storage
-            self.update_status("Analyzing storage...")
-            disk_data = self.collect_disk_info()
+            # Disks
+            self.status_label.config(text="Checking disks...")
+            disk_info = self.get_disk_info()
             
-            # Step 4: Security
-            self.update_status("Checking security...")
-            sec_data = self.collect_security_info()
-            self.system_data.update(sec_data)
+            # Processes
+            self.status_label.config(text="Checking running programs...")
+            proc_info = self.get_proc_info()
             
-            # Step 5: Processes
-            self.update_status("Scanning processes...")
-            proc_data = self.collect_process_info()
+            # Network
+            self.status_label.config(text="Checking network...")
+            net_info = self.get_net_info()
             
             # Update UI
-            self.root.after(0, self.update_scan_results, disk_data, proc_data)
+            self.master.after(0, self._update_ui, sys_info, hw_info, disk_info, proc_info, net_info)
             
-            self.update_status("Scan complete!")
+            self.status_label.config(text="Scan complete")
+            self.last_scan = datetime.now()
             
         except Exception as e:
-            error_msg = f"Scan error: {str(e)}"
-            self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
-            self.update_status("Scan failed")
+            self.master.after(0, lambda: messagebox.showerror("Error", f"Scan failed: {e}"))
+            self.status_label.config(text="Scan failed")
         finally:
-            self.root.after(0, self.scan_complete)
+            self.master.after(0, self._scan_done)
     
-    def scan_complete(self):
-        """Clean up after scan"""
-        self.is_scanning = False
-        self.run_btn.config(state=NORMAL, text="Start System Scan")
-        self.progress.stop()
+    def _scan_done(self):
+        self.scanning = False
+        self.scan_btn.config(state=NORMAL, text="▶ Run Full Scan")
+        self.prog.stop()
     
-    def collect_system_info(self):
-        """Collect basic system information"""
-        data = {}
+    def get_sys_info(self):
+        info = {}
         
         try:
-            # OS info
-            data['OS'] = f"{platform.system()} {platform.release()}"
-            data['Version'] = platform.version()
-            data['Architecture'] = platform.architecture()[0]
-            data['Hostname'] = socket.gethostname()
+            # Basic stuff
+            info['OS'] = f"{platform.system()} {platform.release()}"
+            info['Version'] = platform.version()
             
-            # Windows edition
+            # Windows edition from registry
             try:
+                import winreg
                 key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 
                                     r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
-                edition, _ = winreg.QueryValueEx(key, "ProductName")
+                edition = winreg.QueryValueEx(key, "ProductName")[0]
                 winreg.CloseKey(key)
-                data['Edition'] = edition
+                info['Edition'] = edition
             except:
-                data['Edition'] = "Unknown"
+                info['Edition'] = "Unknown"
             
-            # CPU info
-            data['Processor'] = platform.processor()
-            data['CPU Cores'] = f"{psutil.cpu_count(logical=False)} physical, {psutil.cpu_count(logical=True)} logical"
+            # Uptime
+            if has_psutil:
+                boot = datetime.fromtimestamp(psutil.boot_time())
+                uptime = datetime.now() - boot
+                days = uptime.days
+                hours = uptime.seconds // 3600
+                mins = (uptime.seconds % 3600) // 60
+                info['Uptime'] = f"{days}d {hours}h {mins}m"
+            
+            # Python version
+            info['Python'] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+            
+        except Exception as e:
+            info['Error'] = str(e)
+        
+        return info
+    
+    def get_hardware_info(self):
+        info = {}
+        
+        if not has_psutil:
+            info['Error'] = "Need psutil for hardware info"
+            return info
+        
+        try:
+            # CPU
+            info['CPU Cores'] = psutil.cpu_count(logical=True)
+            info['CPU Physical'] = psutil.cpu_count(logical=False)
+            
+            # CPU usage
+            usage = psutil.cpu_percent(interval=0.5)
+            info['CPU Usage'] = f"{usage:.1f}%"
+            
+            # CPU freq if available
+            freq = psutil.cpu_freq()
+            if freq:
+                info['CPU Speed'] = f"{freq.current:.0f} MHz"
             
             # Memory
             mem = psutil.virtual_memory()
-            data['Total RAM'] = f"{mem.total / (1024**3):.1f} GB"
+            info['Total RAM'] = f"{mem.total / (1024**3):.1f} GB"
+            info['Used RAM'] = f"{mem.used / (1024**3):.1f} GB"
+            info['RAM %'] = f"{mem.percent}%"
             
-            # Uptime
-            boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
-            uptime = datetime.datetime.now() - boot_time
-            data['Uptime'] = str(uptime).split('.')[0]  # Remove microseconds
-            
-            # IP address
-            try:
-                data['IP Address'] = socket.gethostbyname(socket.gethostname())
-            except:
-                data['IP Address'] = "Not available"
-                
-        except Exception as e:
-            data['Error'] = f"System info error: {str(e)}"
-        
-        return data
-    
-    def collect_performance_info(self):
-        """Collect performance metrics"""
-        data = {}
-        
-        try:
-            # CPU usage
-            cpu_percent = psutil.cpu_percent(interval=1)
-            data['CPU Usage'] = f"{cpu_percent}%"
-            
-            # CPU frequency
-            cpu_freq = psutil.cpu_freq()
-            if cpu_freq:
-                data['CPU Frequency'] = f"{cpu_freq.current:.0f} MHz"
-            
-            # Memory usage
-            mem = psutil.virtual_memory()
-            data['Memory Usage'] = f"{mem.percent}%"
-            data['Available RAM'] = f"{mem.available / (1024**3):.1f} GB"
-            
-            # Disk I/O
-            disk_io = psutil.disk_io_counters()
-            data['Disk Read'] = f"{disk_io.read_bytes / (1024**2):.1f} MB"
-            data['Disk Write'] = f"{disk_io.write_bytes / (1024**2):.1f} MB"
+            # Swap
+            swap = psutil.swap_memory()
+            if swap.total > 0:
+                info['Swap'] = f"{swap.used / (1024**3):.1f} / {swap.total / (1024**3):.1f} GB"
             
         except Exception as e:
-            data['Perf Error'] = f"Performance error: {str(e)}"
+            info['Error'] = f"Hardware error: {e}"
         
-        return data
+        return info
     
-    def collect_disk_info(self):
-        """Collect disk information"""
-        disks = []
+    def get_disk_info(self):
+        info = []
+        
+        if not has_psutil:
+            return [{"Error": "psutil needed for disk info"}]
         
         try:
-            partitions = psutil.disk_partitions()
-            for part in partitions:
+            for part in psutil.disk_partitions():
                 try:
                     usage = psutil.disk_usage(part.mountpoint)
                     disk = {
-                        'Device': part.device,
-                        'Mount': part.mountpoint,
-                        'Type': part.fstype,
-                        'Total': f"{usage.total / (1024**3):.1f} GB",
-                        'Used': f"{usage.used / (1024**3):.1f} GB",
-                        'Free': f"{usage.free / (1024**3):.1f} GB",
-                        'Percent': f"{usage.percent}%"
+                        'drive': part.device,
+                        'mount': part.mountpoint,
+                        'type': part.fstype,
+                        'total_gb': usage.total / (1024**3),
+                        'used_gb': usage.used / (1024**3),
+                        'free_gb': usage.free / (1024**3),
+                        'percent': usage.percent
                     }
-                    disks.append(disk)
+                    info.append(disk)
                 except:
-                    continue
+                    # Can't access this drive
+                    pass
         except Exception as e:
-            disks.append({'Error': f"Disk error: {str(e)}"})
+            info.append({'error': str(e)})
         
-        return disks
+        return info
     
-    def collect_security_info(self):
-        """Collect security information"""
-        data = {}
+    def get_proc_info(self):
+        procs = []
+        
+        if not has_psutil:
+            return [{"name": "Need psutil for process list"}]
         
         try:
-            # Windows Defender
-            try:
-                result = subprocess.run(['powershell', '-Command', 
-                                       'Get-MpComputerStatus | Select-Object -ExpandProperty AntivirusEnabled'],
-                                      capture_output=True, text=True, timeout=5)
-                data['Windows Defender'] = "Enabled" if 'True' in result.stdout else "Disabled"
-            except:
-                data['Windows Defender'] = "Unknown"
-            
-            # Firewall
-            try:
-                result = subprocess.run(['netsh', 'advfirewall', 'show', 'allprofiles'],
-                                      capture_output=True, text=True, timeout=5)
-                data['Firewall'] = "Enabled" if 'ON' in result.stdout else "Disabled"
-            except:
-                data['Firewall'] = "Unknown"
-            
-            # Remote Desktop
-            try:
-                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                                    r"SYSTEM\CurrentControlSet\Control\Terminal Server")
-                value, _ = winreg.QueryValueEx(key, "fDenyTSConnections")
-                winreg.CloseKey(key)
-                data['Remote Desktop'] = "Enabled" if value == 0 else "Disabled"
-            except:
-                data['Remote Desktop'] = "Unknown"
-            
-            # Current user
-            import getpass
-            data['Current User'] = getpass.getuser()
-            
-        except Exception as e:
-            data['Security Error'] = f"Security error: {str(e)}"
-        
-        return data
-    
-    def collect_process_info(self):
-        """Collect process information"""
-        processes = []
-        
-        try:
-            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+            # Get top 10 by memory
+            all_procs = []
+            for p in psutil.process_iter(['pid', 'name', 'memory_percent']):
                 try:
-                    info = proc.info
-                    if info['memory_percent']:  # Only include if we have memory info
-                        processes.append({
-                            'pid': info['pid'],
-                            'name': info['name'],
-                            'cpu': info['cpu_percent'],
-                            'memory': info['memory_percent']
-                        })
+                    all_procs.append(p.info)
                 except:
-                    continue
+                    pass
             
-            # Sort by memory usage and take top 15
-            processes.sort(key=lambda x: x['memory'], reverse=True)
-            processes = processes[:15]
+            # Sort by memory and take top
+            all_procs.sort(key=lambda x: x['memory_percent'] or 0, reverse=True)
+            for p in all_procs[:15]:
+                procs.append({
+                    'pid': p['pid'],
+                    'name': p['name'][:30],  # truncate long names
+                    'mem': p['memory_percent']
+                })
+        except Exception as e:
+            procs.append({'error': str(e)})
+        
+        return procs
+    
+    def get_net_info(self):
+        info = {}
+        
+        if not has_psutil:
+            info['Error'] = "Need psutil for network info"
+            return info
+        
+        try:
+            # Network stats
+            net = psutil.net_io_counters()
+            info['Sent'] = f"{net.bytes_sent / (1024**2):.1f} MB"
+            info['Recv'] = f"{net.bytes_recv / (1024**2):.1f} MB"
+            
+            # IP addresses
+            import socket
+            try:
+                host = socket.gethostname()
+                ip = socket.gethostbyname(host)
+                info['IP'] = ip
+            except:
+                info['IP'] = "Unknown"
             
         except Exception as e:
-            processes.append({'Error': f"Process error: {str(e)}"})
+            info['Error'] = str(e)
         
-        return processes
+        return info
     
-    def update_scan_results(self, disk_data, proc_data):
-        """Update UI with scan results"""
+    def _update_ui(self, sys_info, hw_info, disk_info, proc_info, net_info):
+        # Store data
+        self.data.update({
+            'sys': sys_info,
+            'hw': hw_info,
+            'disks': disk_info,
+            'procs': proc_info,
+            'net': net_info
+        })
         
-        # Update summary
-        summary_text = "=== SYSTEM SUMMARY ===\n\n"
-        for key, value in self.system_data.items():
-            if key not in ['Error', 'Perf Error', 'Security Error']:
-                summary_text += f"{key}: {value}\n"
+        # Update overview tab
+        overview = "=== System Overview ===\n\n"
+        for k, v in sys_info.items():
+            overview += f"{k}: {v}\n"
         
-        self.update_text_widget(self.summary_text, summary_text)
+        overview += "\n=== Hardware ===\n"
+        for k, v in hw_info.items():
+            if k != 'Error':
+                overview += f"{k}: {v}\n"
         
-        # Update System tab
-        sys_text = "=== SYSTEM INFORMATION ===\n\n"
-        for key, value in self.system_data.items():
-            if not key.endswith('Error') and not key in ['CPU Usage', 'Memory Usage']:
-                sys_text += f"{key:20}: {value}\n"
+        self.update_tab('Overview', overview)
         
-        self.update_text_widget(self.tabs["System_text"], sys_text)
+        # Hardware tab
+        hw_text = "=== Hardware Details ===\n\n"
+        for k, v in hw_info.items():
+            hw_text += f"{k:15}: {v}\n"
         
-        # Update Performance tab
-        perf_text = "=== PERFORMANCE METRICS ===\n\n"
-        perf_keys = ['CPU Usage', 'CPU Frequency', 'Memory Usage', 'Available RAM', 
-                    'Disk Read', 'Disk Write']
-        for key in perf_keys:
-            if key in self.system_data:
-                perf_text += f"{key:20}: {self.system_data[key]}\n"
+        self.update_tab('Hardware', hw_text)
         
-        self.update_text_widget(self.tabs["Performance_text"], perf_text)
+        # Storage tab
+        disk_text = "=== Disk Drives ===\n\n"
+        for d in disk_info:
+            if 'drive' in d:
+                disk_text += f"{d['drive']} ({d['type']})\n"
+                disk_text += f"  Mount: {d['mount']}\n"
+                disk_text += f"  Size: {d['total_gb']:.1f} GB\n"
+                disk_text += f"  Used: {d['used_gb']:.1f} GB ({d['percent']}%)\n"
+                disk_text += f"  Free: {d['free_gb']:.1f} GB\n\n"
         
-        # Update Storage tab
-        storage_text = "=== STORAGE INFORMATION ===\n\n"
-        if disk_data and isinstance(disk_data, list):
-            for disk in disk_data:
-                if isinstance(disk, dict) and 'Device' in disk:
-                    storage_text += f"Drive: {disk['Device']}\n"
-                    storage_text += f"  Mount: {disk.get('Mount', 'N/A')}\n"
-                    storage_text += f"  Type: {disk.get('Type', 'N/A')}\n"
-                    storage_text += f"  Total: {disk.get('Total', 'N/A')}\n"
-                    storage_text += f"  Used: {disk.get('Used', 'N/A')} ({disk.get('Percent', 'N/A')})\n"
-                    storage_text += f"  Free: {disk.get('Free', 'N/A')}\n\n"
+        self.update_tab('Storage', disk_text)
         
-        self.update_text_widget(self.tabs["Storage_text"], storage_text)
+        # Processes tab
+        proc_text = "=== Top Processes (by memory) ===\n\n"
+        proc_text += "PID       Name                          Memory %\n"
+        proc_text += "-" * 50 + "\n"
         
-        # Update Security tab
-        sec_text = "=== SECURITY STATUS ===\n\n"
-        sec_keys = ['Windows Defender', 'Firewall', 'Remote Desktop', 'Current User']
-        for key in sec_keys:
-            if key in self.system_data:
-                status = self.system_data[key]
-                icon = "✓" if status == "Enabled" else "✗" if status == "Disabled" else "?"
-                sec_text += f"{icon} {key:20}: {status}\n"
+        for p in proc_info:
+            if 'pid' in p:
+                proc_text += f"{p['pid']:8}  {p['name']:30}  {p.get('mem', 0):6.2f}\n"
         
-        self.update_text_widget(self.tabs["Security_text"], sec_text)
+        self.update_tab('Running', proc_text)
         
-        # Update Processes tab
-        proc_text = "=== TOP PROCESSES (by memory) ===\n\n"
-        if proc_data and isinstance(proc_data, list):
-            proc_text += f"{'PID':>8}  {'Name':<30}  {'CPU %':>8}  {'Mem %':>8}\n"
-            proc_text += "-" * 60 + "\n"
-            for proc in proc_data:
-                if isinstance(proc, dict) and 'pid' in proc:
-                    proc_text += f"{proc['pid']:>8}  {proc.get('name', 'N/A')[:30]:<30}  "
-                    proc_text += f"{proc.get('cpu', 0):>8.1f}  {proc.get('memory', 0):>8.2f}\n"
+        # Network tab
+        net_text = "=== Network ===\n\n"
+        for k, v in net_info.items():
+            net_text += f"{k:10}: {v}\n"
         
-        self.update_text_widget(self.tabs["Processes_text"], proc_text)
+        self.update_tab('Network', net_text)
         
-        # Select first tab
-        self.notebook.select(0)
+        # Update info box with summary
+        info_text = f"Last scan: {datetime.now().strftime('%H:%M:%S')}\n"
+        info_text += f"OS: {sys_info.get('OS', '?')}\n"
         
-        # Show completion message
-        messagebox.showinfo("Scan Complete", "System scan completed successfully!")
+        if 'Total RAM' in hw_info:
+            info_text += f"RAM: {hw_info['Total RAM']}\n"
+        
+        if disk_info and 'total_gb' in disk_info[0]:
+            total = sum(d['total_gb'] for d in disk_info if 'total_gb' in d)
+            info_text += f"Total disk: {total:.1f} GB\n"
+        
+        self.update_info(info_text)
+        
+        # Show completion
+        messagebox.showinfo("Done", "System scan completed!")
     
-    def quick_system(self):
-        """Quick system check"""
-        self.update_status("Quick system check...")
-        data = self.collect_system_info()
+    def show_system(self):
+        # Quick system view
+        info = self.get_sys_info()
+        text = "=== System Info ===\n\n"
+        for k, v in info.items():
+            text += f"{k}: {v}\n"
         
-        text = "=== QUICK SYSTEM CHECK ===\n\n"
-        for key, value in data.items():
-            text += f"{key}: {value}\n"
-        
-        self.update_text_widget(self.summary_text, text)
-        self.update_text_widget(self.tabs["System_text"], text)
-        self.notebook.select(0)
-        self.update_status("Quick system check complete")
+        self.update_info(text)
+        self.tabs.select(0)  # Overview tab
+        self.status_label.config(text="System info loaded")
     
-    def quick_disk(self):
-        """Quick disk check"""
-        self.update_status("Quick disk check...")
-        disks = self.collect_disk_info()
+    def show_disks(self):
+        # Quick disk view
+        disks = self.get_disk_info()
+        text = "=== Disks ===\n\n"
         
-        text = "=== QUICK DISK CHECK ===\n\n"
-        if disks and isinstance(disks, list):
-            for disk in disks:
-                if isinstance(disk, dict) and 'Device' in disk:
-                    text += f"{disk['Device']}: {disk.get('Percent', 'N/A')} used\n"
-                    text += f"  Free space: {disk.get('Free', 'N/A')}\n\n"
+        for d in disks:
+            if 'drive' in d:
+                text += f"{d['drive']}: {d.get('percent', 0)}% used\n"
+                text += f"  Free: {d.get('free_gb', 0):.1f} GB\n\n"
         
-        self.update_text_widget(self.summary_text, text)
-        self.update_text_widget(self.tabs["Storage_text"], text)
-        self.notebook.select(2)  # Storage tab
-        self.update_status("Quick disk check complete")
+        self.update_info(text)
+        self.tabs.select(2)  # Storage tab
+        self.status_label.config(text="Disk info loaded")
     
-    def generate_report(self):
-        """Generate a report file"""
-        if not self.system_data:
-            messagebox.showwarning("No Data", "Please run a scan first to collect data.")
+    def save_report(self):
+        if not self.data or 'sys' not in self.data:
+            messagebox.showwarning("No Data", "Run a scan first to get data")
             return
         
-        # Create filename with timestamp
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"system_report_{timestamp}.txt"
+        # Ask where to save
+        default_name = f"pc_check_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
         
-        # Ask for save location
-        filepath = filedialog.asksaveasfilename(
+        fname = filedialog.asksaveasfilename(
             defaultextension=".txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            initialfile=filename
+            filetypes=[("Text files", "*.txt")],
+            initialfile=default_name
         )
         
-        if not filepath:
+        if not fname:
             return
         
         try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write("=" * 60 + "\n")
-                f.write("WINDOWS SYSTEM DIAGNOSTIC REPORT\n")
-                f.write("=" * 60 + "\n")
-                f.write(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Computer: {self.system_data.get('Hostname', 'Unknown')}\n")
-                f.write("=" * 60 + "\n\n")
+            with open(fname, 'w', encoding='utf-8') as f:
+                f.write("PC Diagnostic Report\n")
+                f.write("=" * 50 + "\n")
+                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Computer: {self.data.get('host', 'Unknown')}\n")
+                f.write("=" * 50 + "\n\n")
                 
-                # Write all data
-                f.write("SYSTEM INFORMATION\n")
-                f.write("-" * 40 + "\n")
-                for key, value in self.system_data.items():
-                    f.write(f"{key}: {value}\n")
+                # System
+                f.write("SYSTEM\n")
+                f.write("-" * 30 + "\n")
+                for k, v in self.data.get('sys', {}).items():
+                    f.write(f"{k}: {v}\n")
                 
-                # Add recommendations
-                f.write("\n\nRECOMMENDATIONS\n")
-                f.write("-" * 40 + "\n")
-                recs = self.get_recommendations()
-                for i, rec in enumerate(recs, 1):
-                    f.write(f"{i}. {rec}\n")
+                # Hardware
+                f.write("\n\nHARDWARE\n")
+                f.write("-" * 30 + "\n")
+                for k, v in self.data.get('hw', {}).items():
+                    if k != 'Error':
+                        f.write(f"{k}: {v}\n")
+                
+                # Disks
+                f.write("\n\nSTORAGE\n")
+                f.write("-" * 30 + "\n")
+                for d in self.data.get('disks', []):
+                    if 'drive' in d:
+                        f.write(f"{d['drive']}: {d.get('percent', 0)}% used\n")
+                        f.write(f"  Free: {d.get('free_gb', 0):.1f} GB\n")
+                
+                # Recommendations
+                f.write("\n\nNOTES\n")
+                f.write("-" * 30 + "\n")
+                notes = self._get_notes()
+                for note in notes:
+                    f.write(f"• {note}\n")
             
-            self.update_status(f"Report saved: {os.path.basename(filepath)}")
+            self.status_label.config(text=f"Saved: {os.path.basename(fname)}")
             
-            # Ask to open the file
-            if messagebox.askyesno("Report Generated", 
-                                  f"Report saved to:\n{filepath}\n\nOpen report now?"):
-                os.startfile(filepath)
+            # Ask to open
+            if messagebox.askyesno("Saved", f"Report saved to:\n{fname}\n\nOpen it now?"):
+                os.startfile(fname)
                 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save report: {str(e)}")
+            messagebox.showerror("Error", f"Couldn't save: {e}")
     
-    def get_recommendations(self):
-        """Generate recommendations"""
-        recs = []
+    def _get_notes(self):
+        notes = []
         
-        # Check disk usage from summary text
-        summary = self.summary_text.get(1.0, END)
-        if "Disk" in summary:
-            for line in summary.split('\n'):
-                if '% used' in line:
-                    try:
-                        percent = float(line.split('%')[0].split()[-1])
-                        if percent > 90:
-                            recs.append(f"Disk critically full ({percent}%). Free up space immediately.")
-                        elif percent > 80:
-                            recs.append(f"Disk getting full ({percent}%). Consider cleaning up files.")
-                    except:
-                        pass
+        # Check disk space
+        disks = self.data.get('disks', [])
+        for d in disks:
+            if 'percent' in d and d['percent'] > 90:
+                notes.append(f"Drive {d.get('drive', '?')} is almost full ({d['percent']}%)")
+            elif 'percent' in d and d['percent'] > 80:
+                notes.append(f"Drive {d.get('drive', '?')} is getting full ({d['percent']}%)")
         
-        # Check memory usage
-        if 'Memory Usage' in self.system_data:
+        # Check RAM
+        hw = self.data.get('hw', {})
+        if 'RAM %' in hw:
             try:
-                mem_usage = float(self.system_data['Memory Usage'].strip('%'))
-                if mem_usage > 90:
-                    recs.append(f"High memory usage ({mem_usage}%). Consider closing applications.")
+                ram_pct = float(hw['RAM %'].strip('%'))
+                if ram_pct > 90:
+                    notes.append(f"High RAM usage ({ram_pct}%) - might need more memory")
             except:
                 pass
         
-        # Security recommendations
-        if self.system_data.get('Windows Defender') == 'Disabled':
-            recs.append("Enable Windows Defender for antivirus protection.")
+        if not notes:
+            notes.append("System looks okay")
         
-        if self.system_data.get('Firewall') == 'Disabled':
-            recs.append("Enable Windows Firewall for network security.")
+        notes.append("Keep Windows updated")
+        notes.append("Back up important files regularly")
         
-        if not recs:
-            recs.append("System appears to be running normally.")
-        
-        recs.append("Keep Windows updated for security and performance.")
-        recs.append("Regularly back up important data.")
-        
-        return recs
+        return notes
 
-def main():
-    """Main entry point"""
-    # Check platform
-    if platform.system() != "Windows":
-        print("Error: This tool requires Windows.")
+def run_app():
+    """Start the app"""
+    if not has_tk:
+        print("Tkinter not available. Need Python with GUI support.")
+        input("Press enter...")
         return
     
-    # Create and run the GUI
     root = Tk()
-    
-    # Center window
-    root.update_idletasks()
-    width = 1000
-    height = 700
-    x = (root.winfo_screenwidth() // 2) - (width // 2)
-    y = (root.winfo_screenheight() // 2) - (height // 2)
-    root.geometry(f'{width}x{height}+{x}+{y}')
-    
-    # Create app
-    app = SimpleDiagnosticTool(root)
-    
-    # Start main loop
-    root.mainloop()
-
-# Alternative console version if GUI fails
-def console_version():
-    """Fallback console version"""
-    print("\n" + "="*60)
-    print("WINDOWS DIAGNOSTIC TOOL - CONSOLE VERSION")
-    print("="*60)
-    
-    print("\nChecking system...")
+    app = DiagTool(root)
     
     try:
-        # Basic system info
-        print(f"\nOS: {platform.system()} {platform.release()}")
-        print(f"Version: {platform.version()}")
-        print(f"Hostname: {socket.gethostname()}")
-        
-        # CPU
-        print(f"\nCPU Cores: {psutil.cpu_count(logical=False)} physical, {psutil.cpu_count(logical=True)} logical")
-        print(f"CPU Usage: {psutil.cpu_percent(interval=1)}%")
-        
-        # Memory
-        mem = psutil.virtual_memory()
-        print(f"\nTotal RAM: {mem.total / (1024**3):.1f} GB")
-        print(f"Available RAM: {mem.available / (1024**3):.1f} GB")
-        print(f"Memory Usage: {mem.percent}%")
-        
-        # Disks
-        print("\nDISKS:")
-        partitions = psutil.disk_partitions()
-        for part in partitions:
-            try:
-                usage = psutil.disk_usage(part.mountpoint)
-                print(f"  {part.device}: {usage.percent}% used ({usage.free / (1024**3):.1f} GB free)")
-            except:
-                print(f"  {part.device}: Access denied")
-        
-        print("\n" + "="*60)
-        input("\nPress Enter to exit...")
-        
+        root.mainloop()
+    except KeyboardInterrupt:
+        print("\nClosing...")
     except Exception as e:
-        print(f"\nError: {e}")
-        input("\nPress Enter to exit...")
+        print(f"Error: {e}")
+        input("Press enter...")
 
+# If run directly
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"GUI failed: {e}")
-        console_version()
+    run_app()
